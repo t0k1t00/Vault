@@ -1,0 +1,945 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VAULT — Cloud File Storage</title>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Mono:wght@300;400;500&family=Playfair+Display:ital@0;1&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #0a0a0b;
+    --surface: #111113;
+    --border: #1e1e22;
+    --border-bright: #2e2e34;
+    --text: #e8e8ec;
+    --muted: #55555f;
+    --accent: #c8ff00;
+    --accent-dim: rgba(200,255,0,0.08);
+    --accent-glow: rgba(200,255,0,0.25);
+    --danger: #ff4040;
+    --radius: 2px;
+  }
+
+  html { font-size: 16px; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'DM Mono', monospace;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* Noise texture overlay */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='1'/%3E%3C/svg%3E");
+    opacity: 0.025;
+    pointer-events: none;
+    z-index: 9999;
+  }
+
+  /* Scanline effect */
+  body::after {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.03) 2px, rgba(0,0,0,0.03) 4px);
+    pointer-events: none;
+    z-index: 9998;
+  }
+
+  /* ── HEADER ── */
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 24px 48px;
+    border-bottom: 1px solid var(--border);
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    backdrop-filter: blur(20px);
+    background: rgba(10,10,11,0.85);
+  }
+
+  .logo {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+  }
+
+  .logo-text {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 2rem;
+    letter-spacing: 0.15em;
+    color: var(--accent);
+    text-shadow: 0 0 40px var(--accent-glow);
+    line-height: 1;
+  }
+
+  .logo-sub {
+    font-size: 0.65rem;
+    color: var(--muted);
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+  }
+
+  .status-indicator {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.7rem;
+    color: var(--muted);
+    letter-spacing: 0.1em;
+  }
+
+  .status-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 8px var(--accent);
+    animation: pulse 2s ease-in-out infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.5; transform: scale(0.8); }
+  }
+
+  /* ── MAIN LAYOUT ── */
+  main {
+    display: grid;
+    grid-template-columns: 380px 1fr;
+    min-height: calc(100vh - 73px);
+  }
+
+  /* ── LEFT PANEL ── */
+  .panel-left {
+    border-right: 1px solid var(--border);
+    padding: 40px 36px;
+    display: flex;
+    flex-direction: column;
+    gap: 40px;
+  }
+
+  .section-label {
+    font-size: 0.6rem;
+    letter-spacing: 0.3em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 16px;
+  }
+
+  /* Drop Zone */
+  .drop-zone {
+    border: 1px dashed var(--border-bright);
+    border-radius: var(--radius);
+    padding: 48px 32px;
+    text-align: center;
+    cursor: pointer;
+    position: relative;
+    overflow: hidden;
+    transition: all 0.3s ease;
+    background: transparent;
+  }
+
+  .drop-zone::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: var(--accent-dim);
+    opacity: 0;
+    transition: opacity 0.3s;
+  }
+
+  .drop-zone:hover::before,
+  .drop-zone.dragover::before {
+    opacity: 1;
+  }
+
+  .drop-zone.dragover {
+    border-color: var(--accent);
+    box-shadow: 0 0 30px var(--accent-glow), inset 0 0 30px var(--accent-dim);
+  }
+
+  .drop-zone input[type="file"] {
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    cursor: pointer;
+  }
+
+  .drop-icon {
+    font-size: 3rem;
+    margin-bottom: 16px;
+    display: block;
+    color: var(--muted);
+    transition: color 0.3s, transform 0.3s;
+  }
+
+  .drop-zone:hover .drop-icon {
+    color: var(--accent);
+    transform: translateY(-4px);
+  }
+
+  .drop-title {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 1.4rem;
+    letter-spacing: 0.1em;
+    color: var(--text);
+    margin-bottom: 8px;
+  }
+
+  .drop-sub {
+    font-size: 0.7rem;
+    color: var(--muted);
+    letter-spacing: 0.05em;
+  }
+
+  /* Selected file preview */
+  .file-preview {
+    display: none;
+    align-items: center;
+    gap: 12px;
+    padding: 14px 16px;
+    background: var(--surface);
+    border: 1px solid var(--border-bright);
+    border-radius: var(--radius);
+    margin-top: 12px;
+  }
+
+  .file-preview.visible { display: flex; }
+
+  .preview-icon {
+    font-size: 1.5rem;
+    flex-shrink: 0;
+  }
+
+  .preview-info { flex: 1; min-width: 0; }
+
+  .preview-name {
+    font-size: 0.75rem;
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: var(--text);
+  }
+
+  .preview-size {
+    font-size: 0.65rem;
+    color: var(--muted);
+    margin-top: 2px;
+  }
+
+  .preview-remove {
+    background: none;
+    border: none;
+    color: var(--muted);
+    cursor: pointer;
+    font-size: 1rem;
+    transition: color 0.2s;
+    flex-shrink: 0;
+  }
+
+  .preview-remove:hover { color: var(--danger); }
+
+  /* Upload button */
+  .upload-btn {
+    width: 100%;
+    padding: 16px;
+    background: var(--accent);
+    color: #000;
+    border: none;
+    border-radius: var(--radius);
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 1.1rem;
+    letter-spacing: 0.15em;
+    cursor: pointer;
+    position: relative;
+    overflow: hidden;
+    transition: all 0.2s;
+    margin-top: 4px;
+  }
+
+  .upload-btn::before {
+    content: '';
+    position: absolute;
+    top: 0; left: -100%;
+    width: 100%; height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.3), transparent);
+    transition: left 0.4s;
+  }
+
+  .upload-btn:hover::before { left: 100%; }
+
+  .upload-btn:hover {
+    box-shadow: 0 0 30px var(--accent-glow);
+    transform: translateY(-1px);
+  }
+
+  .upload-btn:active { transform: translateY(0); }
+
+  .upload-btn:disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
+    transform: none;
+  }
+
+  /* Progress */
+  .progress-wrap {
+    display: none;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .progress-wrap.visible { display: flex; }
+
+  .progress-label {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.65rem;
+    color: var(--muted);
+    letter-spacing: 0.05em;
+  }
+
+  .progress-bar {
+    height: 2px;
+    background: var(--border);
+    border-radius: 1px;
+    overflow: hidden;
+  }
+
+  .progress-fill {
+    height: 100%;
+    background: var(--accent);
+    box-shadow: 0 0 8px var(--accent);
+    width: 0%;
+    transition: width 0.3s ease;
+  }
+
+  /* Stats */
+  .stats-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+  }
+
+  .stat-card {
+    padding: 16px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+  }
+
+  .stat-value {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 1.8rem;
+    color: var(--accent);
+    line-height: 1;
+    letter-spacing: 0.05em;
+  }
+
+  .stat-key {
+    font-size: 0.6rem;
+    color: var(--muted);
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    margin-top: 4px;
+  }
+
+  /* ── RIGHT PANEL ── */
+  .panel-right {
+    padding: 40px 48px;
+  }
+
+  .files-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 24px;
+  }
+
+  .files-title {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 1.8rem;
+    letter-spacing: 0.1em;
+    color: var(--text);
+  }
+
+  .sort-controls {
+    display: flex;
+    gap: 8px;
+  }
+
+  .sort-btn {
+    font-family: 'DM Mono', monospace;
+    font-size: 0.65rem;
+    letter-spacing: 0.1em;
+    padding: 6px 12px;
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--muted);
+    cursor: pointer;
+    transition: all 0.2s;
+    text-transform: uppercase;
+  }
+
+  .sort-btn:hover, .sort-btn.active {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+
+  /* File list */
+  .file-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .file-item {
+    display: grid;
+    grid-template-columns: 44px 1fr auto;
+    align-items: center;
+    gap: 16px;
+    padding: 16px 20px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    transition: all 0.2s;
+    text-decoration: none;
+    position: relative;
+    overflow: hidden;
+    animation: slideIn 0.3s ease both;
+  }
+
+  @keyframes slideIn {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .file-item::before {
+    content: '';
+    position: absolute;
+    left: 0; top: 0; bottom: 0;
+    width: 2px;
+    background: var(--accent);
+    transform: scaleY(0);
+    transition: transform 0.2s;
+  }
+
+  .file-item:hover {
+    border-color: var(--border-bright);
+    background: rgba(255,255,255,0.02);
+    transform: translateX(2px);
+  }
+
+  .file-item:hover::before { transform: scaleY(1); }
+
+  .file-type-badge {
+    width: 44px;
+    height: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.2rem;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    flex-shrink: 0;
+  }
+
+  .file-details { min-width: 0; }
+
+  .file-name {
+    font-size: 0.8rem;
+    font-weight: 500;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: block;
+    margin-bottom: 4px;
+  }
+
+  .file-meta {
+    font-size: 0.65rem;
+    color: var(--muted);
+    letter-spacing: 0.05em;
+  }
+
+  .file-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+  }
+
+  .action-btn {
+    font-family: 'DM Mono', monospace;
+    font-size: 0.65rem;
+    letter-spacing: 0.08em;
+    padding: 6px 12px;
+    border-radius: var(--radius);
+    cursor: pointer;
+    text-decoration: none;
+    transition: all 0.2s;
+    text-transform: uppercase;
+  }
+
+  .btn-download {
+    background: var(--accent-dim);
+    border: 1px solid rgba(200,255,0,0.2);
+    color: var(--accent);
+  }
+
+  .btn-download:hover {
+    background: var(--accent);
+    color: #000;
+    box-shadow: 0 0 15px var(--accent-glow);
+  }
+
+  /* Empty state */
+  .empty-state {
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 80px 40px;
+    text-align: center;
+  }
+
+  .empty-state.visible { display: flex; }
+
+  .empty-icon {
+    font-size: 4rem;
+    margin-bottom: 20px;
+    opacity: 0.2;
+  }
+
+  .empty-title {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 1.4rem;
+    letter-spacing: 0.1em;
+    color: var(--muted);
+    margin-bottom: 8px;
+  }
+
+  .empty-sub {
+    font-size: 0.7rem;
+    color: var(--muted);
+    opacity: 0.5;
+  }
+
+  /* Toast */
+  .toast-container {
+    position: fixed;
+    bottom: 32px;
+    right: 32px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    z-index: 1000;
+  }
+
+  .toast {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 14px 20px;
+    background: var(--surface);
+    border: 1px solid var(--border-bright);
+    border-radius: var(--radius);
+    font-size: 0.75rem;
+    min-width: 260px;
+    animation: toastIn 0.3s ease;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+  }
+
+  .toast.success { border-left: 3px solid var(--accent); }
+  .toast.error { border-left: 3px solid var(--danger); }
+
+  @keyframes toastIn {
+    from { opacity: 0; transform: translateX(20px); }
+    to { opacity: 1; transform: translateX(0); }
+  }
+
+  .toast-icon { font-size: 1rem; }
+
+  /* Loading shimmer */
+  .shimmer {
+    background: linear-gradient(90deg, var(--surface) 25%, var(--border) 50%, var(--surface) 75%);
+    background-size: 200% 100%;
+    animation: shimmer 1.5s infinite;
+    border-radius: var(--radius);
+    height: 76px;
+  }
+
+  @keyframes shimmer {
+    from { background-position: 200% 0; }
+    to { background-position: -200% 0; }
+  }
+
+  /* Corner decoration */
+  .corner-deco {
+    position: fixed;
+    bottom: 32px;
+    left: 32px;
+    font-size: 0.6rem;
+    color: var(--muted);
+    opacity: 0.3;
+    letter-spacing: 0.2em;
+    writing-mode: vertical-rl;
+    transform: rotate(180deg);
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">
+    <span class="logo-text">VAULT</span>
+    <span class="logo-sub">Cloud File Storage</span>
+  </div>
+  <div class="status-indicator">
+    <div class="status-dot"></div>
+    <span>CONNECTED — LOCALHOST:5000</span>
+  </div>
+</header>
+
+<main>
+  <!-- LEFT PANEL -->
+  <aside class="panel-left">
+
+    <div>
+      <p class="section-label">Upload File</p>
+      <div class="drop-zone" id="dropZone">
+        <input type="file" id="fileInput" onchange="onFileSelected(this)">
+        <span class="drop-icon">⬆</span>
+        <div class="drop-title">Drop File Here</div>
+        <div class="drop-sub">or click to browse</div>
+      </div>
+
+      <div class="file-preview" id="filePreview">
+        <span class="preview-icon" id="previewIcon">📄</span>
+        <div class="preview-info">
+          <div class="preview-name" id="previewName">—</div>
+          <div class="preview-size" id="previewSize">—</div>
+        </div>
+        <button class="preview-remove" onclick="clearFile()" title="Remove">✕</button>
+      </div>
+
+      <div class="progress-wrap" id="progressWrap">
+        <div class="progress-label">
+          <span>UPLOADING</span>
+          <span id="progressPct">0%</span>
+        </div>
+        <div class="progress-bar">
+          <div class="progress-fill" id="progressFill"></div>
+        </div>
+      </div>
+
+      <button class="upload-btn" id="uploadBtn" onclick="upload()" disabled>
+        UPLOAD TO VAULT
+      </button>
+    </div>
+
+    <div>
+      <p class="section-label">Storage Stats</p>
+      <div class="progress-bar" style="margin-top:10px;">
+        <div class="progress-fill" id="storageFill"></div>
+      </div>
+      <div style="font-size:0.6rem;color:#555;margin-top:4px;" id="storageText">
+        0 MB / 10 MB
+      </div>
+      <div class="stats-grid">
+        <div class="stat-card">
+          <div class="stat-value" id="statCount">—</div>
+          <div class="stat-key">Total Files</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" id="statExt">—</div>
+          <div class="stat-key">File Types</div>
+        </div>
+      </div>
+    </div>
+
+  </aside>
+
+  <!-- RIGHT PANEL -->
+  <section class="panel-right">
+    <div class="files-header">
+      <h2 class="files-title">Stored Files</h2>
+      <div class="sort-controls">
+        <button class="sort-btn active" onclick="setSortMode('name')">Name</button>
+        <button class="sort-btn" onclick="setSortMode('type')">Type</button>
+      </div>
+    </div>
+
+    <div class="file-list" id="fileList">
+      <div class="shimmer"></div>
+      <div class="shimmer" style="animation-delay:.1s"></div>
+      <div class="shimmer" style="animation-delay:.2s"></div>
+    </div>
+
+    <div class="empty-state" id="emptyState">
+      <div class="empty-icon">🗄</div>
+      <div class="empty-title">Vault is Empty</div>
+      <div class="empty-sub">Upload your first file to get started</div>
+    </div>
+  </section>
+</main>
+
+<div class="toast-container" id="toastContainer"></div>
+
+<div class="corner-deco">VAULT v1.0 — SECURE STORAGE</div>
+
+<script>
+  const API = 'http://localhost:5000';
+  let selectedFile = null;
+  let sortMode = 'name';
+  let allFiles = [];
+
+  // ── File type helpers ──
+  function getFileIcon(name) {
+    const ext = name.split('.').pop().toLowerCase();
+    const icons = {
+      pdf: '📕', doc: '📝', docx: '📝', txt: '📄', md: '📄',
+      jpg: '🖼', jpeg: '🖼', png: '🖼', gif: '🖼', svg: '🖼', webp: '🖼',
+      mp4: '🎬', mov: '🎬', avi: '🎬', mkv: '🎬',
+      mp3: '🎵', wav: '🎵', flac: '🎵', aac: '🎵',
+      zip: '📦', rar: '📦', tar: '📦', gz: '📦',
+      js: '⚙️', ts: '⚙️', py: '🐍', html: '🌐', css: '🎨',
+      json: '📋', csv: '📊', xlsx: '📊', xls: '📊',
+    };
+    return icons[ext] || '📄';
+  }
+
+  function formatSize(bytes) {
+    if (!bytes) return '—';
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
+    return (bytes / 1048576).toFixed(1) + ' MB';
+  }
+
+  // ── Drag & Drop ──
+  const dropZone = document.getElementById('dropZone');
+
+  dropZone.addEventListener('dragover', e => {
+    e.preventDefault();
+    dropZone.classList.add('dragover');
+  });
+
+  dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+
+  dropZone.addEventListener('drop', e => {
+    e.preventDefault();
+    dropZone.classList.remove('dragover');
+    const file = e.dataTransfer.files[0];
+    if (file) setFile(file);
+  });
+
+  function onFileSelected(input) {
+    if (input.files[0]) setFile(input.files[0]);
+  }
+
+  function setFile(file) {
+    selectedFile = file;
+    document.getElementById('previewIcon').textContent = getFileIcon(file.name);
+    document.getElementById('previewName').textContent = file.name;
+    document.getElementById('previewSize').textContent = formatSize(file.size);
+    document.getElementById('filePreview').classList.add('visible');
+    document.getElementById('uploadBtn').disabled = false;
+  }
+
+  function clearFile() {
+    selectedFile = null;
+    document.getElementById('fileInput').value = '';
+    document.getElementById('filePreview').classList.remove('visible');
+    document.getElementById('uploadBtn').disabled = true;
+  }
+
+  // ── Upload ──
+  function upload() {
+    if (!selectedFile) return;
+
+    const btn = document.getElementById('uploadBtn');
+    const progressWrap = document.getElementById('progressWrap');
+    const progressFill = document.getElementById('progressFill');
+    const progressPct = document.getElementById('progressPct');
+
+    btn.disabled = true;
+    progressWrap.classList.add('visible');
+
+    const formData = new FormData();
+    formData.append('file', selectedFile);
+
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', `${API}/upload`);
+
+    xhr.upload.onprogress = e => {
+      if (e.lengthComputable) {
+        const pct = Math.round((e.loaded / e.total) * 100);
+        progressFill.style.width = pct + '%';
+        progressPct.textContent = pct + '%';
+      }
+    };
+
+    xhr.onload = () => {
+      progressWrap.classList.remove('visible');
+      progressFill.style.width = '0%';
+      clearFile();
+      btn.disabled = false;
+
+      if (xhr.status === 200) {
+        toast('File uploaded to vault', 'success', '✓');
+        loadFiles();
+      } else {
+        toast('Upload failed', 'error', '✕');
+      }
+    };
+
+    xhr.onerror = () => {
+      progressWrap.classList.remove('visible');
+      btn.disabled = false;
+      toast('Connection error', 'error', '✕');
+    };
+
+    xhr.send(formData);
+  }
+
+  //delete files
+  
+    function deleteFile(filename) {
+    if (!confirm("Delete this file from vault?")) return;
+
+    fetch(`${API}/delete/${filename}`, {
+        method: 'DELETE'
+    })
+    .then(res => {
+        if (res.ok) {
+        toast("File removed from vault", "success", "✓");
+        loadFiles();
+        } else {
+        toast("Delete failed", "error", "✕");
+        }
+    })
+    .catch(() => toast("Connection error", "error", "✕"));
+    }
+
+  // ── Load Files ──
+  function loadFiles() {
+    fetch(`${API}/files`)
+      .then(r => r.json())
+      .then(data => {
+          allFiles = data.files;
+          renderFiles();
+          updateStats(data.files);
+          updateStorageBar(data.used, data.limit);
+      })
+      .catch(() => {
+        document.getElementById('fileList').innerHTML = '';
+        document.getElementById('emptyState').classList.add('visible');
+      });
+  }
+
+  function renderFiles() {
+    const list = document.getElementById('fileList');
+    const emptyState = document.getElementById('emptyState');
+
+    let files = [...allFiles];
+    if (sortMode === 'type') {
+      files.sort((a, b) => a.split('.').pop().localeCompare(b.split('.').pop()));
+    } else {
+      files.sort((a, b) => a.localeCompare(b));
+    }
+
+    list.innerHTML = '';
+
+    if (!files.length) {
+      emptyState.classList.add('visible');
+      return;
+    }
+
+    emptyState.classList.remove('visible');
+
+    files.forEach((file, i) => {
+      const item = document.createElement('div');
+      item.className = 'file-item';
+      item.style.animationDelay = (i * 0.04) + 's';
+
+      const ext = file.split('.').pop().toUpperCase();
+
+      const encoded = encodeURIComponent(file);
+
+      item.innerHTML = `
+        <div class="file-type-badge">${getFileIcon(file)}</div>
+        <div class="file-details">
+          <span class="file-name">${file}</span>
+          <span class="file-meta">${ext} FILE</span>
+        </div>
+        <div class="file-actions">
+          <a class="action-btn btn-download" href="${API}/download/${encoded}" target="_blank">↓ Download</a>
+          <button class="action-btn" onclick="deleteFile('${encoded}')">✕</button>
+        </div>
+      `;
+
+      list.appendChild(item);
+    });
+  }
+
+  function updateStats(files) {
+    document.getElementById('statCount').textContent = files.length;
+    const types = new Set(files.map(f => f.split('.').pop().toLowerCase()));
+    document.getElementById('statExt').textContent = types.size;
+  }
+
+  function updateStorageBar(used, limit) {
+    const pct = Math.min(100, Math.round((used / limit) * 100));
+    document.getElementById('storageFill').style.width = pct + '%';
+
+    const usedMB = (used / (1024*1024)).toFixed(2);
+    const limitMB = (limit / (1024*1024)).toFixed(0);
+
+    document.getElementById('storageText').textContent =
+      `${usedMB} MB / ${limitMB} MB`;
+  }
+
+  function setSortMode(mode) {
+    sortMode = mode;
+
+    document.querySelectorAll('.sort-btn').forEach(b => {
+      b.classList.remove('active');
+    });
+
+    document.querySelectorAll('.sort-btn').forEach(btn => {
+      if (btn.textContent.toLowerCase() === mode) {
+        btn.classList.add('active');
+      }
+    });
+
+    renderFiles();
+  }
+
+  // ── Toast ──
+  function toast(message, type = 'success', icon = '✓') {
+    const container = document.getElementById('toastContainer');
+    const el = document.createElement('div');
+    el.className = `toast ${type}`;
+    el.innerHTML = `<span class="toast-icon">${icon}</span> ${message}`;
+    container.appendChild(el);
+    setTimeout(() => el.remove(), 3500);
+  }
+
+  // ── Init ──
+  loadFiles();
+</script>
+</body>
+</html>
